@@ -1,4 +1,4 @@
-# Lab Module 3: AKS Networking  
+# Lab : AKS Networking  
 ![](../content/lab3-title.png)
 > Estimated Duration: 60 minutes    
 
