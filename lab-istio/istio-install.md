@@ -34,7 +34,7 @@ istioctl version
 ### Create AKS cluster with Istio add-on
 
 ```bash
-export CLUSTER=aksistio4
+export CLUSTER=aksistio1
 export RESOURCE_GROUP=aksistiorg
 export LOCATION=eastus2
 ```

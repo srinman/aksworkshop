@@ -8,6 +8,13 @@ Istio provides a number of features to help you build resilient applications.  T
 - Fault Injection
 
 
+```bash
+export CLUSTER=aksistio1
+export RESOURCE_GROUP=aksistiorg
+export LOCATION=eastus2
+az aks show --name $CLUSTER --resource-group $RESOURCE_GROUP --query 'serviceMeshProfile'
+```
+
 
 
 ## Retries
@@ -80,7 +87,7 @@ k get svc -n retryns
 
 
 ```bash
-export ENDPOINT_URL="http://135.224.217.16/unstable-endpoint"
+export ENDPOINT_URL="http://130.213.177.122/unstable-endpoint"
 python tools/resiliencytest.py  
 ```
 
@@ -98,6 +105,17 @@ spec:
     mode: STRICT
 EOF
 ```
+
+Check ENDPOINT_URL in a browser. Traffic is blocked. 
+
+```bash
+k delete peerauthentication default -n retryns   
+```
+
+Try again. Check ENDPOINT_URL in a browser. Traffic is allowed.   
+
+Apply the PeerAuthentication policy  again.   
+
 
 
 ### Deploy the client app (clientapp)
@@ -224,7 +242,7 @@ EOF
 ```
 
 ```bash
-export ENDPOINT_URL="http://135.232.54.218/unstable-endpoint"
+echo $ENDPOINT_URL
 python tools/resiliencytest.py  
 ```
 
@@ -233,4 +251,11 @@ You should see a mixed success and failure rate since the retries are not being 
 kubectl logs -l app=aks-istio-ingressgateway-external -n aks-istio-ingress
 kubectl logs -l app=appflaky -n retryns
 kubectl logs -l app=client -n retryns
+
+
+Cleanup the resources created for the test:
+
+```bash
+kubectl delete ns retryns
+```  
 
