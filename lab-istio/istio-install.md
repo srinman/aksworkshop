@@ -410,129 +410,51 @@ kubectl logs -l app=istioapi -c istio-proxy -n sampleapp --tail=10
 
 > 🔍 **What you should observe**: Even though requests are successful, the istio-proxy logs don't show individual HTTP request details.
 
-## Part 5: Enable Access Logging with Telemetry
+> 💡 **Note**: In production environments, you may want to enable access logging for better observability. This is covered in detail in the next lab (Istio Ingress Gateway) where you'll learn about different methods to configure access logging.
 
-### Step 5.1: Configure Access Logging (Method 1 - ConfigMap) [Optional]
-
-> ⚠️ **Note**: This ConfigMap method is shown for reference. Skip to Step 5.2 for the recommended approach.
-
-If you want to use the ConfigMap approach, replace `asm-1-25` with your revision number:
-
-```bash
-kubectl apply -f - <<EOF
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: istio-shared-configmap-asm-1-25
-  namespace: aks-istio-system
-data:
-  mesh: |-
-    accessLogFile: /dev/stdout
-    defaultConfig:
-      holdApplicationUntilProxyStarts: true
-EOF
-```
-
-### Step 5.2: Configure Access Logging (Method 2 - Telemetry) ✅ Recommended
-
-Now let's enable access logging using the modern Telemetry CRD:
-
-```bash
-kubectl apply -n aks-istio-system -f - <<EOF
-apiVersion: telemetry.istio.io/v1
-kind: Telemetry
-metadata:
-  name: mesh-logging-default
-spec:
-  accessLogging:
-  - providers:
-    - name: envoy
-EOF
-```
-
-### Step 5.3: Verify Telemetry Configuration
-
-Check that the Telemetry resource was created successfully:
-
-```bash
-# Verify the telemetry configuration
-kubectl get telemetry -n aks-istio-system
-
-# Get details of the telemetry configuration
-kubectl describe telemetry mesh-logging-default -n aks-istio-system
-```
-
-### Step 5.4: Test and Observe **AFTER** Telemetry Configuration
-
-Now let's make requests and see the difference:
-
-```bash
-# Make some requests to generate traffic
-kubectl -n testns exec -it netshoot -- curl istioapi.sampleapp.svc.cluster.local
-kubectl -n testns exec -it netshoot -- curl istioapi.sampleapp.svc.cluster.local/books
-kubectl -n testns exec -it netshoot -- curl istioapi.sampleapp.svc.cluster.local/authors
-
-# Check proxy logs again - now you should see access logs!
-kubectl logs -l app=istioapi -c istio-proxy -n sampleapp --tail=20
-```
-
-### Step 5.5: Analyze the Access Log Format
-
-📊 **Expected Access Log Format**: You should now see detailed access logs like:
-```
-[2024-08-02T11:30:15.123Z] "GET /books HTTP/1.1" 200 - via_upstream - "-" 0 156 5 4 "-" "curl/7.68.0" "abc-123-def" "istioapi.sampleapp.svc.cluster.local" "10.244.1.5:5000"
-```
-
-**Log Fields Explanation**:
-- `[timestamp]`: When the request occurred
-- `"GET /books HTTP/1.1"`: HTTP method, path, and protocol
-- `200`: HTTP response code
-- `via_upstream`: How the request was handled
-- `0 156 5 4`: Bytes received, sent, and timing information
-- `"curl/7.68.0"`: User agent
-- `"istioapi.sampleapp..."`: Destination service
-- `"10.244.1.5:5000"`: Actual backend IP and port
-
-## Part 6: Summary and Next Steps
+## Part 5: Summary and Next Steps
 
 ### 🎯 What You've Learned
 
-In this lab, you experienced the practical difference between:
+In this lab, you successfully:
 
-**Before Telemetry Configuration:**
-- ❌ Istio-proxy logs contained only startup and administrative messages
-- ❌ No visibility into HTTP requests flowing through the mesh
-- ❌ Limited observability for debugging and monitoring
+**✅ Infrastructure Setup:**
+- Created an AKS cluster with Istio service mesh add-on enabled
+- Verified all Istio components are properly installed and running
+- Configured proper networking and security contexts
 
-**After Telemetry Configuration:**
-- ✅ Detailed access logs for every HTTP request
-- ✅ Rich information including response codes, timing, and routing decisions
-- ✅ Full observability into service mesh traffic patterns
+**✅ Application Deployment:**
+- Deployed applications with automatic sidecar injection
+- Verified that pods show `2/2` containers ready (application + istio-proxy)
+- Tested internal service-to-service communication within the mesh
+
+**✅ Service Mesh Verification:**
+- Confirmed Istio proxy integration with your applications
+- Validated that traffic flows through the service mesh
+- Observed basic proxy logs and understood their structure
 
 ### 📊 Key Success Indicators
 
 ✅ **You should have achieved:**
 - Pods showing `2/2` containers ready (application + istio-proxy)
-- Working application accessible via Kubernetes service
-- **Before telemetry**: Minimal proxy logs with no access logs
-- **After telemetry**: Rich access logs showing HTTP request details
-- Understanding of how Istio's observability can be configured
+- Working application accessible via Kubernetes service DNS
+- Basic proxy logs showing Envoy startup and configuration
+- Understanding of automatic sidecar injection behavior
 
 ### 🎉 Congratulations!
 
 You have successfully:
 - Created an AKS cluster with Istio add-on
 - Deployed applications with automatic sidecar injection
-- **Experienced the before/after effect** of telemetry configuration
-- Configured modern access logging using Telemetry CRD
-- Verified comprehensive service mesh observability
+- **Verified core service mesh functionality**
+- **Prepared your cluster** for advanced Istio traffic management features
 
 ### 🚀 Next Steps
 
 Your cluster is now ready for advanced Istio features like:
-- **Traffic Management**: Virtual Services for canary deployments
+- **Traffic Management**: Ingress gateways and virtual services
+- **Advanced Observability**: Access logging and distributed tracing
 - **Security Policies**: mTLS and authorization policies  
-- **Advanced Observability**: Distributed tracing with Jaeger
 - **Monitoring**: Integration with Prometheus and Grafana
 - **Fault Injection**: Testing resilience patterns 
 
