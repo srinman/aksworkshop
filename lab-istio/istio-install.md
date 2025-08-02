@@ -1,81 +1,134 @@
 
-# Istio add-on installation on AKS
+# Lab: Istio Service Mesh Add-on on AKS
+
+## Overview
+In this lab, you will learn how to:
+- Set up an AKS cluster with Istio add-on enabled
+- Configure basic Istio components
+- Deploy sample applications with sidecar injection
+- Verify Istio installation and functionality
 
 ## Prerequisites
 
-### Tools
+Before starting this lab, ensure you have the following tools installed and configured:
 
-- Azure CLI
-- kubectl
-- helm
-- istioctl
+### Required Tools
 
-#### Azure CLI
+| Tool | Purpose | Version Check |
+|------|---------|---------------|
+| Azure CLI | Manage Azure resources | `az --version` |
+| kubectl | Kubernetes command line | `kubectl version --client` |
+| istioctl | Istio command line | `istioctl version` |
+
+### Verify Tool Installation
+
+Run these commands to verify your tools are installed:
 
 ```bash
+# Check Azure CLI version
 az --version
-```
 
-#### kubectl
-
-```bash
+# Check kubectl version
 kubectl version --client
-```
 
-#### istioctl
-
-```bash
+# Check istioctl version
 istioctl version
 ```
 
+## Part 1: Create AKS Cluster with Istio Add-on
 
+### Step 1.1: Set Environment Variables
 
-
-### Create AKS cluster with Istio add-on
+First, set up your environment variables. **Customize these values** for your lab:
 
 ```bash
-export CLUSTER=aksistio1
-export RESOURCE_GROUP=aksistiorg
+export CLUSTER=aksistio3
+export RESOURCE_GROUP=aksistio3rg
 export LOCATION=eastus2
 ```
 
+### Step 1.2: Check Available Istio Revisions
 
+Before creating the cluster, check what Istio revisions are available in your region:
 
 ```bash
-
-az aks mesh get-revisions --location ${LOCATION} -o table  
-
-az group create --name ${RESOURCE_GROUP} --location ${LOCATION}
-
-az aks create --resource-group ${RESOURCE_GROUP} --name ${CLUSTER} --enable-asm --generate-ssh-keys
-
-
-az aks show --resource-group ${RESOURCE_GROUP} --name ${CLUSTER} 
-
-az aks show --resource-group ${RESOURCE_GROUP} --name ${CLUSTER}  --query 'serviceMeshProfile.mode'
-
-az aks show --name $CLUSTER --resource-group $RESOURCE_GROUP --query 'serviceMeshProfile'
-
-az aks get-credentials --resource-group ${RESOURCE_GROUP} --name ${CLUSTER}
-
-k get ns 
-k get all -n aks-istio-system
-k get all -n aks-istio-ingress
-k get all -n aks-istio-egress
-
-
-az aks show --resource-group ${RESOURCE_GROUP} --name ${CLUSTER}  --query 'serviceMeshProfile.istio.revisions'
+az aks mesh get-revisions --location ${LOCATION} -o table
 ```
 
-Note down the revision number.  
+### Step 1.3: Create Resource Group and AKS Cluster
 
-
-### Basic Istio configurations 
-
-Understand Istio CRDs 
+Create the resource group and AKS cluster with Istio add-on enabled:
 
 ```bash
-k get crd | grep istio  
+# Create resource group
+az group create --name ${RESOURCE_GROUP} --location ${LOCATION}
+
+# Create AKS cluster with Istio add-on
+az aks create \
+  --resource-group ${RESOURCE_GROUP} \
+  --name ${CLUSTER} \
+  --enable-asm \
+  --generate-ssh-keys \
+  --node-vm-size Standard_D4s_v5
+```
+
+> **Note**: The `--node-vm-size Standard_D4s_v5` ensures x86_64 architecture for compatibility with standard container images.
+
+### Step 1.4: Verify Cluster Creation
+
+Verify that your cluster was created successfully and Istio is enabled:
+
+```bash
+# Get cluster information
+az aks show --resource-group ${RESOURCE_GROUP} --name ${CLUSTER}
+
+# Check service mesh profile mode
+az aks show --resource-group ${RESOURCE_GROUP} --name ${CLUSTER} --query 'serviceMeshProfile.mode'
+
+# Get detailed service mesh profile
+az aks show --name ${CLUSTER} --resource-group ${RESOURCE_GROUP} --query 'serviceMeshProfile'
+```
+
+### Step 1.5: Connect to Your Cluster
+
+Get credentials and verify connectivity:
+
+```bash
+# Get cluster credentials
+az aks get-credentials --resource-group ${RESOURCE_GROUP} --name ${CLUSTER}
+
+# Verify namespaces (should see Istio system namespaces)
+kubectl get ns
+
+# Check Istio system components
+kubectl get all -n aks-istio-system
+kubectl get all -n aks-istio-ingress
+kubectl get all -n aks-istio-egress
+```
+
+### Step 1.6: Get Istio Revision Number
+
+Get the Istio revision number - **you'll need this for later steps**:
+
+```bash
+az aks show --resource-group ${RESOURCE_GROUP} --name ${CLUSTER} --query 'serviceMeshProfile.istio.revisions'
+```
+
+📝 **Important**: Note down the revision number (e.g., `asm-1-25`) - you'll use it in subsequent steps.  
+
+
+## Part 2: Configure Istio Components
+
+### Step 2.1: Explore Istio Custom Resource Definitions (CRDs)
+
+Istio extends Kubernetes with custom resources. Let's explore what's available:
+
+```bash
+kubectl get crd | grep istio
+```
+
+You should see output similar to:
+```
 authorizationpolicies.security.istio.io                      2024-10-21T20:57:52Z
 destinationrules.networking.istio.io                         2024-10-21T20:57:52Z
 envoyfilters.networking.istio.io                             2024-10-21T20:57:52Z
@@ -89,80 +142,166 @@ telemetries.telemetry.istio.io                               2024-10-21T20:57:52
 virtualservices.networking.istio.io                          2024-10-21T20:57:52Z
 wasmplugins.extensions.istio.io                              2024-10-21T20:57:52Z
 workloadentries.networking.istio.io                          2024-10-21T20:57:52Z
-workloadgroups.networking.istio.io                           2024-10-21T20:57:52Z 
+workloadgroups.networking.istio.io                           2024-10-21T20:57:52Z
 ```
 
-Configmap
+### Step 2.2: Examine Default Istio Configuration
 
-A default ConfigMap (for example, istio-asm-1-18 for revision asm-1-18) is created in aks-istio-system namespace on the cluster when the Istio add-on is enabled. 
-Issue the following command to get the ConfigMap:
+A default ConfigMap is created when the Istio add-on is enabled. Check it using your revision number:
 
 ```bash
-k get cm istio-asm-1-22 -n aks-istio-system -o yaml
+# Replace 'asm-1-25' with your actual revision number from Step 1.6
+kubectl get cm istio-asm-1-25 -n aks-istio-system -o yaml
 ```
 
-Use the output of --query 'serviceMeshProfile.istio.revisions' to get the revision number
+## Part 3: Deploy and Test Sample Applications
 
+### Step 3.1: Build Container Images
 
-**Attention**  Use of Telemetry is recommended.   Following configmap can be skipped if you follow Telemetry method. 
-In the below example, the revision number is 1-22
-```bash
-kubectl apply -f - <<EOF
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: istio-shared-configmap-asm-1-22
-  namespace: aks-istio-system
-data:
-  mesh: |-
-    accessLogFile: /dev/stdout
-    defaultConfig:
-      holdApplicationUntilProxyStarts: true
-EOF
-```
+First, navigate to the application directory and build your container images:
 
-
-Telemtry:   
+> **Important**: Change `srinmantest` to your own Azure Container Registry name.
 
 ```bash
-cat <<EOF | kubectl apply -n aks-istio-system -f -
-apiVersion: telemetry.istio.io/v1
-kind: Telemetry
-metadata:
-  name: mesh-logging-default
-spec:
-  accessLogging:
-  - providers:
-    - name: envoy
-EOF
-```
-
-
-
-###  Create a sample application and check sidecar injection
-
-change registryname to yours  
 cd istioapi
-```bash
-az acr build --registry srinmantest --image istioapi:v1 --file Dockerfilev1 .
-az acr build --registry srinmantest --image istioapi:v2 --file Dockerfilev2 .
-az acr build --registry srinmantest --image istioapi:v3 --file Dockerfilev3 .
-az acr build --registry srinmantest --image appflaky:v1 --file Dockerfileflaky .
-az acr build --registry srinmantest --image echocaller:v1 --file Dockerfileechocaller .
-az acr build --registry srinmantest --image clientapp:v1 --file Dockerfileclientapp .
+
+# Build all application images for x86_64 architecture
+az acr build --registry srinmantest --image istioapi:v1 --file Dockerfilev1 --platform linux/amd64 .
+az acr build --registry srinmantest --image istioapi:v2 --file Dockerfilev2 --platform linux/amd64 .
+az acr build --registry srinmantest --image istioapi:v3 --file Dockerfilev3 --platform linux/amd64 .
+az acr build --registry srinmantest --image appflaky:v1 --file Dockerfileflaky --platform linux/amd64 .
+az acr build --registry srinmantest --image echocaller:v1 --file Dockerfileechocaller --platform linux/amd64 .
+az acr build --registry srinmantest --image clientapp:v1 --file Dockerfileclientapp --platform linux/amd64 .
 ```
 
-Attach ACR to AKS  
-    
-```bash
-az aks update --resource-group ${RESOURCE_GROUP} --name ${CLUSTER} --attach-acr "/subscriptions/.../Microsoft.ContainerRegistry/registries/srinmantest"
-```   
+### Step 3.2: Attach ACR to AKS Cluster
+
+Allow your AKS cluster to pull images from your Azure Container Registry:
 
 ```bash
-k create ns sampleapp
-k create ns testns
+# Replace the subscription and registry path with your actual values
+az aks update \
+  --resource-group ${RESOURCE_GROUP} \
+  --name ${CLUSTER} \
+  --attach-acr "/subscriptions/YOUR_SUBSCRIPTION_ID/resourceGroups/YOUR_RG/providers/Microsoft.ContainerRegistry/registries/YOUR_REGISTRY_NAME"
 ```
 
+## 🏗️ Architecture Overview: Testing Setup
+
+Before we proceed with creating namespaces and deploying applications, let's understand the architecture we're building:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           AKS Cluster (aksistio3)                          │
+│                                                                             │
+│  ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐  │
+│  │   aks-istio-system  │  │     sampleapp       │  │       testns        │  │
+│  │    (Istio Control   │  │   (Application      │  │   (Testing Tools)   │  │
+│  │      Plane)         │  │    Namespace)       │  │                     │  │
+│  │                     │  │                     │  │                     │  │
+│  │ ┌─────────────────┐ │  │ ┌─────────────────┐ │  │ ┌─────────────────┐ │  │
+│  │ │   istiod        │ │  │ │   istioapi      │ │  │ │    netshoot     │ │  │
+│  │ │  (Control       │ │  │ │    (Flask       │ │  │ │  (Test Client)  │ │  │
+│  │ │   Plane)        │ │  │ │     API)        │ │  │ │                 │ │  │
+│  │ └─────────────────┘ │  │ │                 │ │  │ └─────────────────┘ │  │
+│  │                     │  │ │ ┌─────────────┐ │ │  │                     │  │
+│  │ ┌─────────────────┐ │  │ │ │ Container:  │ │ │  │                     │  │
+│  │ │   Telemetry     │ │  │ │ │  api1v1.py  │ │ │  │                     │  │
+│  │ │   Config        │ │  │ │ │ Port: 5000  │ │ │  │                     │  │
+│  │ └─────────────────┘ │  │ │ └─────────────┘ │ │  │                     │  │
+│  └─────────────────────┘  │ └─────────────────┘ │  └─────────────────────┘  │
+│                           │                     │                           │
+│                           │ ┌─────────────────┐ │                           │
+│                           │ │    Service:     │ │                           │
+│                           │ │   istioapi      │ │                           │
+│                           │ │  Port: 80->5000 │ │                           │
+│                           │ └─────────────────┘ │                           │
+│                           └─────────────────────┘                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 🔄 Sidecar Injection Process
+
+**Phase 1: Before Sidecar Injection**
+```
+┌─────────────────────────────────────┐
+│           sampleapp Pod             │
+│  ┌─────────────────────────────────┐│
+│  │        istioapi Container       ││  ← Only 1 container
+│  │     ┌─────────────────────┐     ││
+│  │     │    Flask App        │     ││
+│  │     │   (api1v1.py)       │     ││
+│  │     │   Port: 5000        │     ││
+│  │     └─────────────────────┘     ││
+│  └─────────────────────────────────┘│
+└─────────────────────────────────────┘
+```
+
+**Phase 2: After Namespace Labeling & Pod Recreation**
+```
+┌─────────────────────────────────────┐
+│           sampleapp Pod             │
+│  ┌─────────────────────────────────┐│
+│  │        istioapi Container       ││  ← Application container
+│  │     ┌─────────────────────┐     ││
+│  │     │    Flask App        │     ││
+│  │     │   (api1v1.py)       │     ││
+│  │     │   Port: 5000        │     ││
+│  │     └─────────────────────┘     ││
+│  └─────────────────────────────────┘│
+│  ┌─────────────────────────────────┐│
+│  │       istio-proxy Container     ││  ← Automatically injected!
+│  │     ┌─────────────────────┐     ││
+│  │     │   Envoy Proxy       │     ││
+│  │     │ (Traffic Interception) │   ││
+│  │     │   Metrics & Logs    │     ││
+│  │     └─────────────────────┘     ││
+│  └─────────────────────────────────┘│
+└─────────────────────────────────────┘
+```
+
+### 📡 Traffic Flow After Sidecar Injection
+
+```
+netshoot Pod (testns)                    istioapi Pod (sampleapp)
+┌──────────────┐                        ┌────────────────────────┐
+│              │                        │  ┌──────────────────┐  │
+│   curl       │────────────────────────┼─▶│  istio-proxy     │  │
+│   request    │                        │  │  (Envoy)         │  │
+│              │                        │  │  - Intercepts    │  │
+└──────────────┘                        │  │  - Logs          │  │
+                                        │  │  - Metrics       │  │
+                                        │  └─────────┬────────┘  │
+                                        │            │           │
+                                        │  ┌─────────▼────────┐  │
+                                        │  │  istioapi        │  │
+                                        │  │  Flask App       │  │
+                                        │  │  Port: 5000      │  │
+                                        │  └──────────────────┘  │
+                                        └────────────────────────┘
+```
+
+### 🎯 What We'll Verify
+
+1. **Connectivity Test**: netshoot → istioapi service (through Kubernetes service discovery)
+2. **Sidecar Injection**: Check pod shows `2/2` ready containers
+3. **Proxy Logs**: Verify istio-proxy container captures traffic logs
+4. **Service Mesh**: Confirm traffic flows through Envoy proxy
+
+---
+
+### Step 3.3: Create Application Namespaces
+
+Create separate namespaces for your applications:
+
+```bash
+kubectl create ns sampleapp
+kubectl create ns testns
+```
+
+### Step 3.4: Deploy Sample Application
+
+Deploy the first version of your sample API application:
 
 ```bash
 kubectl apply -f - <<EOF
@@ -203,20 +342,198 @@ spec:
 EOF
 ```
 
-Check connectivity to the application deployed.  
-```bash
-k -n testns run netshoot --image=nicolaka/netshoot -- sh -c 'sleep 2000'
-k -n testns exec -it netshoot -- curl istioapi.sampleapp.svc.cluster.local
-```
+### Step 3.5: Enable Istio Sidecar Injection
+
+Enable automatic sidecar injection for your application namespace:
 
 ```bash
-kubectl label namespace sampleapp istio.io/rev=asm-1-22
-k get pod -n sampleapp
-k delete pod xyz -n sampleapp
-k get pod -n sampleapp
-k logs -l app=istioapi -c istio-proxy  -n sampleapp
+# Replace 'asm-1-25' with your actual revision number from Step 1.6
+kubectl label namespace sampleapp istio.io/rev=asm-1-25
 ```
 
-You should see the sidecar injected in the pod.  You should also see the logs. 
+### Step 3.6: Force Pod Recreation to Inject Sidecars
+
+Restart the pods to trigger sidecar injection:
+
+```bash
+# Check current pods (should show 1/1 ready)
+kubectl get pods -n sampleapp
+
+# Delete pods to trigger recreation with sidecars
+kubectl delete pods --all -n sampleapp
+
+# Verify pods are recreated with sidecars (should show 2/2 ready)
+kubectl get pods -n sampleapp
+```
+
+You should now see pods with `2/2` containers ready (application + istio-proxy).
+
+## Part 4: Test and Observe Proxy Logging Behavior
+
+### Step 4.1: Deploy Test Client
+
+Deploy a test pod to make requests to your application:
+
+```bash
+# Deploy test pod
+kubectl -n testns run netshoot --image=nicolaka/netshoot -- sh -c 'sleep 2000'
+
+# Test connectivity to your application
+kubectl -n testns exec -it netshoot -- curl istioapi.sampleapp.svc.cluster.local
+```
+
+You should see a JSON response from your API.
+
+### Step 4.2: Check Proxy Logs **BEFORE** Telemetry Configuration
+
+Let's examine what the istio-proxy logs contain by default:
+
+```bash
+# Check sidecar proxy logs (before telemetry configuration)
+kubectl logs -l app=istioapi -c istio-proxy -n sampleapp --tail=10
+```
+
+📝 **Expected Behavior**: You'll see minimal logs - mostly startup messages and administrative logs, but **NO access logs** for your HTTP requests.
+
+### Step 4.3: Make Additional Requests and Verify No Access Logs
+
+Make a few more requests to confirm no access logging is happening:
+
+```bash
+# Make multiple requests
+kubectl -n testns exec -it netshoot -- curl istioapi.sampleapp.svc.cluster.local/books
+kubectl -n testns exec -it netshoot -- curl istioapi.sampleapp.svc.cluster.local/authors
+
+# Check logs again - still no access logs
+kubectl logs -l app=istioapi -c istio-proxy -n sampleapp --tail=10
+```
+
+> 🔍 **What you should observe**: Even though requests are successful, the istio-proxy logs don't show individual HTTP request details.
+
+## Part 5: Enable Access Logging with Telemetry
+
+### Step 5.1: Configure Access Logging (Method 1 - ConfigMap) [Optional]
+
+> ⚠️ **Note**: This ConfigMap method is shown for reference. Skip to Step 5.2 for the recommended approach.
+
+If you want to use the ConfigMap approach, replace `asm-1-25` with your revision number:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio-shared-configmap-asm-1-25
+  namespace: aks-istio-system
+data:
+  mesh: |-
+    accessLogFile: /dev/stdout
+    defaultConfig:
+      holdApplicationUntilProxyStarts: true
+EOF
+```
+
+### Step 5.2: Configure Access Logging (Method 2 - Telemetry) ✅ Recommended
+
+Now let's enable access logging using the modern Telemetry CRD:
+
+```bash
+kubectl apply -n aks-istio-system -f - <<EOF
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: mesh-logging-default
+spec:
+  accessLogging:
+  - providers:
+    - name: envoy
+EOF
+```
+
+### Step 5.3: Verify Telemetry Configuration
+
+Check that the Telemetry resource was created successfully:
+
+```bash
+# Verify the telemetry configuration
+kubectl get telemetry -n aks-istio-system
+
+# Get details of the telemetry configuration
+kubectl describe telemetry mesh-logging-default -n aks-istio-system
+```
+
+### Step 5.4: Test and Observe **AFTER** Telemetry Configuration
+
+Now let's make requests and see the difference:
+
+```bash
+# Make some requests to generate traffic
+kubectl -n testns exec -it netshoot -- curl istioapi.sampleapp.svc.cluster.local
+kubectl -n testns exec -it netshoot -- curl istioapi.sampleapp.svc.cluster.local/books
+kubectl -n testns exec -it netshoot -- curl istioapi.sampleapp.svc.cluster.local/authors
+
+# Check proxy logs again - now you should see access logs!
+kubectl logs -l app=istioapi -c istio-proxy -n sampleapp --tail=20
+```
+
+### Step 5.5: Analyze the Access Log Format
+
+📊 **Expected Access Log Format**: You should now see detailed access logs like:
+```
+[2024-08-02T11:30:15.123Z] "GET /books HTTP/1.1" 200 - via_upstream - "-" 0 156 5 4 "-" "curl/7.68.0" "abc-123-def" "istioapi.sampleapp.svc.cluster.local" "10.244.1.5:5000"
+```
+
+**Log Fields Explanation**:
+- `[timestamp]`: When the request occurred
+- `"GET /books HTTP/1.1"`: HTTP method, path, and protocol
+- `200`: HTTP response code
+- `via_upstream`: How the request was handled
+- `0 156 5 4`: Bytes received, sent, and timing information
+- `"curl/7.68.0"`: User agent
+- `"istioapi.sampleapp..."`: Destination service
+- `"10.244.1.5:5000"`: Actual backend IP and port
+
+## Part 6: Summary and Next Steps
+
+### 🎯 What You've Learned
+
+In this lab, you experienced the practical difference between:
+
+**Before Telemetry Configuration:**
+- ❌ Istio-proxy logs contained only startup and administrative messages
+- ❌ No visibility into HTTP requests flowing through the mesh
+- ❌ Limited observability for debugging and monitoring
+
+**After Telemetry Configuration:**
+- ✅ Detailed access logs for every HTTP request
+- ✅ Rich information including response codes, timing, and routing decisions
+- ✅ Full observability into service mesh traffic patterns
+
+### 📊 Key Success Indicators
+
+✅ **You should have achieved:**
+- Pods showing `2/2` containers ready (application + istio-proxy)
+- Working application accessible via Kubernetes service
+- **Before telemetry**: Minimal proxy logs with no access logs
+- **After telemetry**: Rich access logs showing HTTP request details
+- Understanding of how Istio's observability can be configured
+
+### 🎉 Congratulations!
+
+You have successfully:
+- Created an AKS cluster with Istio add-on
+- Deployed applications with automatic sidecar injection
+- **Experienced the before/after effect** of telemetry configuration
+- Configured modern access logging using Telemetry CRD
+- Verified comprehensive service mesh observability
+
+### 🚀 Next Steps
+
+Your cluster is now ready for advanced Istio features like:
+- **Traffic Management**: Virtual Services for canary deployments
+- **Security Policies**: mTLS and authorization policies  
+- **Advanced Observability**: Distributed tracing with Jaeger
+- **Monitoring**: Integration with Prometheus and Grafana
+- **Fault Injection**: Testing resilience patterns 
 
 
