@@ -178,7 +178,7 @@ We'll use the Istio Bookinfo application to demonstrate security features.
 
 1. **Label the default namespace for sidecar injection:**
 ```bash
-kubectl label namespace default istio.io/rev=asm-1-22
+kubectl label namespace default istio.io/rev=asm-1-25
 ```
 
 2. **Deploy the Bookinfo application:**
@@ -192,7 +192,88 @@ kubectl get pods -n default
 kubectl get services -n default
 ```
 
-### Step 2: Create Test Namespaces
+### Step 4: Configure Istio Gateway and VirtualService
+
+To expose the Bookinfo application through the ingress gateway, we need to configure an Istio Gateway and VirtualService:
+
+1. **Apply the Istio Gateway configuration:**
+```bash
+kubectl apply -f - <<EOF
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: bookinfo-gateway
+  namespace: default
+spec:
+  selector:
+    istio: aks-istio-ingressgateway-external
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*"
+EOF
+```
+
+2. **Apply the VirtualService configuration:**
+```bash
+kubectl apply -f - <<EOF
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: bookinfo
+  namespace: default
+spec:
+  hosts:
+  - "*"
+  gateways:
+  - bookinfo-gateway
+  http:
+  - match:
+    - uri:
+        exact: /productpage
+    - uri:
+        prefix: /static
+    - uri:
+        exact: /login
+    - uri:
+        exact: /logout
+    - uri:
+        prefix: /api/v1/products
+    route:
+    - destination:
+        host: productpage
+        port:
+          number: 9080
+EOF
+```
+
+3. **Verify the gateway and virtualservice are created:**
+```bash
+kubectl get gateway -n default
+kubectl get virtualservice -n default
+```
+
+4. **Get the ingress gateway external IP:**
+```bash
+export INGRESS_IP=$(kubectl get svc -n aks-istio-ingress aks-istio-ingressgateway-external -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+echo "Ingress IP: $INGRESS_IP"
+```
+
+5. **Test the application is accessible:**
+```bash
+# Test with curl
+curl http://$INGRESS_IP/productpage
+
+# Or open in browser
+echo "Open this URL in your browser: http://$INGRESS_IP/productpage"
+```
+
+**Expected Result:** You should see the Bookinfo Product Page with book details, reviews, and ratings.
+
+### Step 5: Create Test Namespaces
 
 We'll create test namespaces to demonstrate cross-namespace communication and security policies.
 
@@ -208,7 +289,7 @@ kubectl -n testns run netshoot --image=nicolaka/netshoot -- sh -c 'sleep 2000'
 kubectl -n testns get pod
 ```
 
-### Step 3: Test Initial Connectivity
+### Step 6: Test Initial Connectivity
 
 Before implementing security policies, let's verify that communication works:
 
@@ -366,7 +447,7 @@ To enable secure communication from testns, we need to add it to the service mes
 
 1. **Label testns for sidecar injection:**
 ```bash
-kubectl label namespace testns istio.io/rev=asm-1-22 --overwrite
+kubectl label namespace testns istio.io/rev=asm-1-25 --overwrite
 kubectl get ns --show-labels | grep testns
 ```
 
@@ -420,7 +501,7 @@ In K9S, navigate to the productpage pod and check the envoy container logs to se
 ### Step 4: Add testns2 to the Mesh
 
 ```bash
-kubectl label namespace testns2 istio.io/rev=asm-1-22 --overwrite
+kubectl label namespace testns2 istio.io/rev=asm-1-25 --overwrite
 kubectl delete pod netshoot -n testns2 --force
 kubectl -n testns2 run netshoot --image=nicolaka/netshoot -- sh -c 'sleep 2000'
 ```
