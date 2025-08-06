@@ -461,7 +461,7 @@ kubectl get pods -n kube-system -l app.kubernetes.io/name=ama-metrics -w
 kubectl get configmap -n kube-system | grep ama-metrics
 
 # Check AMA-Metrics logs for configuration loading
-kubectl logs -n kube-system -l app.kubernetes.io/name=ama-metrics -c prometheus-collector --tail=20
+kubectl logs -n kube-system -l app.kubernetes.io/name=ama-metrics -c prometheus-collector 
 ```
 
 **Step 1.5.4: Verify Prometheus Annotations on Istio Pods**
@@ -519,64 +519,7 @@ for i in {1..10}; do
   sleep 1
 done
 
-# Now verify istio_requests_total metrics are generated
-kubectl -n bookinfo exec deployment/productpage-v1 -c istio-proxy -- pilot-agent request GET /stats/prometheus | grep istio_requests_total
-# Expected result: Multiple lines showing request metrics
 
-# TROUBLESHOOTING: If no output above, try these steps:
-
-# 1. First verify the ingress IP is set correctly
-echo "Checking INGRESS_IP: $INGRESS_IP"
-if [ -z "$INGRESS_IP" ]; then
-  echo "INGRESS_IP not set! Setting it now..."
-  export INGRESS_IP=$(kubectl get svc -n aks-istio-ingress aks-istio-ingressgateway-external -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-  echo "INGRESS_IP set to: $INGRESS_IP"
-fi
-
-# 2. Verify the gateway and virtualservice are working
-kubectl get gateway,virtualservice -n bookinfo
-
-# 3. Test direct access to productpage
-curl -v "http://$INGRESS_IP/productpage" | head -20
-
-# 4. Generate more traffic with verbose output
-echo "Generating additional traffic..."
-for i in {1..5}; do
-  response=$(curl -s -w "%{http_code}" "http://$INGRESS_IP/productpage" -o /dev/null)
-  echo "Request $i - HTTP Status: $response"
-  sleep 2
-done
-
-# 5. Check if ANY Istio metrics exist (not just requests_total)
-echo "Checking for any Istio metrics..."
-kubectl -n bookinfo exec deployment/productpage-v1 -c istio-proxy -- pilot-agent request GET /stats/prometheus | grep "istio_" | head -10
-
-# 6. Check Envoy stats to see if traffic is being processed
-echo "Checking Envoy listener stats..."
-kubectl -n bookinfo exec deployment/productpage-v1 -c istio-proxy -- pilot-agent request GET /stats | grep -E "(downstream_|upstream_)" | head -5
-
-# 7. Verify sidecar injection is working
-kubectl get pods -n bookinfo -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[*].name}{"\n"}{end}'
-
-# 8. Try the command again after traffic generation
-echo "Retrying istio_requests_total check..."
-kubectl -n bookinfo exec deployment/productpage-v1 -c istio-proxy -- pilot-agent request GET /stats/prometheus | grep istio_requests_total
-
-# Check for additional Istio metrics
-kubectl -n bookinfo exec deployment/productpage-v1 -c istio-proxy -- pilot-agent request GET /stats/prometheus | grep -E "(istio_request_duration|istio_tcp_connections_opened_total)" | head -5
-```
-
-**Step 2.3: Verify Internal Service-to-Service Metrics**
-
-```bash
-# Generate internal traffic between services
-kubectl -n bookinfo exec deployment/productpage-v1 -c productpage -- curl -s http://reviews:9080/reviews/0
-kubectl -n bookinfo exec deployment/productpage-v1 -c productpage -- curl -s http://details:9080/details/0
-
-# Check for outbound metrics from productpage
-kubectl -n bookinfo exec deployment/productpage-v1 -c istio-proxy -- curl -s localhost:15000/stats/prometheus | grep istio_requests_total | grep reviews
-kubectl -n bookinfo exec deployment/productpage-v1 -c istio-proxy -- curl -s localhost:15000/stats/prometheus | grep istio_requests_total | grep details
-```
 
 ### Step 3: Verify Azure Monitor Metrics Scraping
 
@@ -595,40 +538,6 @@ kubectl get pods -n kube-system | grep ama-metrics
 kubectl get configmap -n kube-system | grep ama
 ```
 
-**Step 3.2: Check ama-metrics Scraping Logs**
-
-```bash
-# Check recent logs for successful metric collection
-kubectl logs deployment/ama-metrics -n kube-system --tail=20
-
-# Look for errors in scraping
-kubectl logs deployment/ama-metrics -n kube-system --tail=100 | grep -i error
-
-# Check for successful scraping messages
-kubectl logs deployment/ama-metrics -n kube-system --tail=100 | grep -i "successfully\|collected\|scraped"
-```
-
-**Step 3.3: Verify Metrics Targets Configuration**
-
-```bash
-# Check what targets ama-metrics is scraping
-kubectl logs deployment/ama-metrics -n kube-system --tail=200 | grep -E "(target|endpoint|scrape)"
-
-# Verify ama-metrics configuration
-kubectl get configmap ama-metrics-settings-configmap -n kube-system -o yaml
-```
-
-**Step 3.4: Test Direct Metrics Collection**
-
-```bash
-# Check if ama-metrics can access the metrics endpoint
-kubectl -n kube-system exec deployment/ama-metrics -- curl -s http://productpage.bookinfo.svc.cluster.local:15000/stats/prometheus | grep istio_requests_total | head -5
-# Note: This might not work due to service mesh policies, but worth checking
-
-# Alternative: Check if metrics are being exposed on the expected port
-kubectl get pods -n bookinfo -o wide
-kubectl get svc -n bookinfo
-```
 
 ### Step 4: Verify Metrics in Azure Monitor Workspace
 
