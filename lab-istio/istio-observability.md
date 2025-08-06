@@ -291,13 +291,15 @@ Azure Monitor Managed Prometheus supports four different configmaps that provide
 | ConfigMap Name | Purpose | Scope | Use Case |
 |---|---|---|---|
 | **ama-metrics-settings-configmap** | General addon settings and configuration | Cluster-wide | - Enable/disable default scrape targets<br>- Configure pod annotation-based scraping<br>- Set metric keep-lists and scrape intervals<br>- Control cluster alias and debug mode |
-| **ama-metrics-prometheus-config** | Custom Prometheus scrape jobs for cluster-level services | Replica (singleton) | - Add custom scrape jobs for cluster services<br>- Configure service discovery and relabeling<br>- Define custom metrics collection rules |
+| **ama-metrics-prometheus-config** | Custom Prometheus scrape jobs for cluster-level services | Replica (singleton) | - Add custom scrape jobs for any services<br>- **✅ Sufficient for Istio metrics collection**<br>- Configure service discovery and relabeling<br>- Scrape both mesh and proxy metrics |
 | **ama-metrics-prometheus-config-node** | Custom Prometheus scrape jobs for node-level targets | DaemonSet (per Linux node) | - Scrape node-specific services<br>- Access services using `$NODE_IP` variable<br>- Collect per-node metrics |
 | **ama-metrics-prometheus-config-node-windows** | Custom Prometheus scrape jobs for Windows node-level targets | DaemonSet (per Windows node) | - Scrape Windows node-specific services<br>- Access services using `$NODE_IP` variable<br>- Collect per-Windows-node metrics |
 
-**For Istio observability, we primarily use:**
-- `ama-metrics-settings-configmap`: Enable pod annotation scraping for Istio namespaces
-- `ama-metrics-prometheus-config`: Define custom scrape jobs for Istio mesh and proxy metrics
+**For Istio observability:**
+- **Primary**: `ama-metrics-prometheus-config` - **This single configmap is sufficient** to collect all Istio metrics including `istio_requests_total`, mesh metrics, and proxy metrics
+- **Optional**: `ama-metrics-settings-configmap` - Only needed if you want to customize default scrape settings or enable additional features like pod annotation-based scraping
+
+> 💡 **Key Insight**: Based on testing, the `ama-metrics-prometheus-config` configmap with proper Kubernetes service discovery can successfully scrape Istio metrics from istio-proxy containers without requiring pod annotation-based scraping configuration.
 
 **Step 1.5.1: Enable Pod Annotation-Based Scraping**
 
