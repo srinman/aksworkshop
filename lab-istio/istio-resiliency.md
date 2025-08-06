@@ -55,8 +55,8 @@ By the end of this lab, you will understand and implement:
 ### Verify Istio Installation
 
 ```bash
-export CLUSTER=aksistio1
-export RESOURCE_GROUP=aksistiorg
+export CLUSTER=aksistio4
+export RESOURCE_GROUP=aksistio4rg
 export LOCATION=eastus2
 az aks show --name $CLUSTER --resource-group $RESOURCE_GROUP --query 'serviceMeshProfile'
 ```
@@ -65,7 +65,7 @@ az aks show --name $CLUSTER --resource-group $RESOURCE_GROUP --query 'serviceMes
 
 ```bash
 kubectl create ns resiliency-lab
-kubectl label namespace resiliency-lab istio.io/rev=asm-1-22
+kubectl label namespace resiliency-lab istio.io/rev=asm-1-25
 ```
 
 ### Lab Environment Architecture
@@ -342,13 +342,32 @@ EOF
 Get the external load balancer IP:
 ```bash
 kubectl get svc appflaky-lb -n resiliency-lab
-export ENDPOINT_URL="http://EXTERNAL_IP/unstable-endpoint"
+
+# Wait for EXTERNAL-IP to be assigned (may take a few minutes)
+# Get the external IP and set the endpoint URL
+export EXTERNAL_IP=$(kubectl get svc appflaky-lb -n resiliency-lab -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+echo "External IP: $EXTERNAL_IP"
+
+# Set the endpoint URL for testing
+export ENDPOINT_URL="http://$EXTERNAL_IP/unstable-endpoint"
+echo "Endpoint URL: $ENDPOINT_URL"
 ```
 
 Test from your local machine:
 ```bash
 cd lab-istio/tools
-python resiliencytest.py
+
+# Install required dependencies (if not already installed)
+pip3 install requests
+
+# Run the resiliency test script
+python3 resiliencytest.py
+
+# Or with custom parameters
+python3 resiliencytest.py --endpoint $ENDPOINT_URL --requests 50 --timeout 5
+
+# Save results to a JSON file
+python3 resiliencytest.py --output results.json
 ```
 
 **Expected Result**: External traffic shows ~50% failure rate because retries only apply to traffic within the mesh.
@@ -361,104 +380,46 @@ python resiliencytest.py
 
 Timeouts prevent requests from hanging indefinitely by setting maximum wait times. This is crucial for maintaining system responsiveness and preventing resource exhaustion.
 
-### Step 1: Create a Slow Service
+### Step 1: Create a Service with Variable Delays
 
-First, let's create a service that introduces delays to demonstrate timeouts:
+**Purpose**: Create a sophisticated service for comprehensive timeout testing.
 
-```bash
-kubectl apply -f - <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: slow-service
-  namespace: resiliency-lab
-  labels:
-    app: slow-service
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: slow-service
-  template:
-    metadata:
-      labels:
-        app: slow-service
-    spec:
-      containers:
-      - name: slow-service
-        image: nginx:alpine
-        ports:
-        - containerPort: 80
-        command: ["/bin/sh"]
-        args: ["-c", "while true; do echo 'HTTP/1.1 200 OK\r\n\r\nSlow response after 10 seconds' | nc -l -p 80 -q 1; sleep 10; done"]
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: slow-service
-  namespace: resiliency-lab
-spec:
-  selector:
-    app: slow-service
-  ports:
-  - name: http
-    protocol: TCP
-    port: 80
-    targetPort: 80
-EOF
+**Why this approach?**
+- Provides **multiple endpoints** with different delay characteristics
+- Includes **health checks** and **proper error handling**
+- Demonstrates **real-world timeout scenarios**
+- Allows testing **route-specific timeout configurations**
+
+**Architecture**: 
+```
+Variable Delay Service
+┌─────────────────────────────────┐
+│   slowapi:v1 (Flask App)        │
+│                                 │
+│ ┌─────────────────────────────┐ │
+│ │ /health        → 0s delay   │ │ → Health checks
+│ │ /fast          → 0s delay   │ │ → Fast operations
+│ │ /slow          → 3-8s delay │ │ → Medium timeouts
+│ │ /very-slow     → 10-15s     │ │ → Long timeouts
+│ │ /configurable  → Custom     │ │ → Flexible testing
+│ └─────────────────────────────┘ │
+│                                 │
+│ Production Features:            │
+│ • Health endpoints             │
+│ • Environment config           │
+│ • Proper logging               │
+│ • Error handling               │
+│ • Kubernetes probes            │
+└─────────────────────────────────┘
 ```
 
-### Step 2: Create a Service with Variable Delays
+Deploy the slow API service using our pre-built Docker image. This service provides multiple endpoints with different response characteristics:
 
-Let's create a more sophisticated service that simulates variable response times:
-
-```bash
-cat > /home/srinman/git/aksworkshop/istioapi/src/slowapi.py << 'EOF'
-from flask import Flask, jsonify, request
-import time
-import random
-
-app = Flask(__name__)
-
-@app.route('/fast')
-def fast_endpoint():
-    """Fast response - no delay"""
-    return jsonify({"message": "Fast response", "delay": 0}), 200
-
-@app.route('/slow')
-def slow_endpoint():
-    """Slow response - 3-8 second delay"""
-    delay = random.uniform(3, 8)
-    time.sleep(delay)
-    return jsonify({"message": "Slow response", "delay": f"{delay:.2f}s"}), 200
-
-@app.route('/very-slow')
-def very_slow_endpoint():
-    """Very slow response - 10-15 second delay"""
-    delay = random.uniform(10, 15)
-    time.sleep(delay)
-    return jsonify({"message": "Very slow response", "delay": f"{delay:.2f}s"}), 200
-
-@app.route('/timeout-test')
-def timeout_test():
-    """Test different timeout scenarios"""
-    scenario = request.args.get('scenario', 'fast')
-    
-    if scenario == 'fast':
-        return fast_endpoint()
-    elif scenario == 'slow':
-        return slow_endpoint()
-    elif scenario == 'very-slow':
-        return very_slow_endpoint()
-    else:
-        return jsonify({"error": "Unknown scenario"}), 400
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
-EOF
-```
-
-Deploy the slow API service:
+- `/health` - Health check endpoint
+- `/fast` - Fast response with no delay
+- `/slow` - Variable delay (3-8 seconds)
+- `/very-slow` - Variable delay (10-15 seconds)
+- `/configurable-delay?delay=X` - Custom delay in seconds
 
 ```bash
 kubectl apply -f - <<EOF
@@ -481,36 +442,28 @@ spec:
     spec:
       containers:
       - name: slowapi
-        image: python:3.9-slim
+        image: srinmantest.azurecr.io/slowapi:v1
         ports:
         - containerPort: 5000
-        command: ["/bin/bash"]
-        args: ["-c", "pip install flask && python -c '
-from flask import Flask, jsonify, request
-import time
-import random
-
-app = Flask(__name__)
-
-@app.route(\"/fast\")
-def fast_endpoint():
-    return jsonify({\"message\": \"Fast response\", \"delay\": 0}), 200
-
-@app.route(\"/slow\")
-def slow_endpoint():
-    delay = random.uniform(3, 8)
-    time.sleep(delay)
-    return jsonify({\"message\": \"Slow response\", \"delay\": f\"{delay:.2f}s\"}), 200
-
-@app.route(\"/very-slow\")
-def very_slow_endpoint():
-    delay = random.uniform(10, 15)
-    time.sleep(delay)
-    return jsonify({\"message\": \"Very slow response\", \"delay\": f\"{delay:.2f}s\"}), 200
-
-if __name__ == \"__main__\":
-    app.run(host=\"0.0.0.0\", port=5000)
-'"]
+        env:
+        - name: PORT
+          value: "5000"
+        - name: MAX_DELAY
+          value: "30"
+        - name: FLASK_ENV
+          value: "production"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
@@ -528,9 +481,11 @@ spec:
 EOF
 ```
 
-### Step 3: Test Without Timeouts
+### Step 1a: Test the Variable Delay Service
 
-Create a client to test the slow service:
+**Learning objective**: Understand how different endpoints can have different response characteristics.
+
+Create a client to test the service:
 
 ```bash
 kubectl apply -f - <<EOF
@@ -555,7 +510,7 @@ spec:
       - name: timeout-client
         image: curlimages/curl:latest
         command: ["/bin/sh"]
-        args: ["-c", "while true; do echo 'Testing fast endpoint:'; time curl -s http://slowapi.resiliency-lab.svc.cluster.local/fast; echo; echo 'Testing slow endpoint:'; time curl -s http://slowapi.resiliency-lab.svc.cluster.local/slow; echo; sleep 30; done"]
+        args: ["-c", "while true; do echo '=== Testing Variable Delay Service ==='; echo 'Health endpoint (0s):'; time curl -s http://slowapi.resiliency-lab.svc.cluster.local/health; echo; echo 'Fast endpoint (0s):'; time curl -s http://slowapi.resiliency-lab.svc.cluster.local/fast; echo; echo 'Slow endpoint (3-8s):'; time curl -s http://slowapi.resiliency-lab.svc.cluster.local/slow; echo; echo 'Very slow endpoint (10-15s):'; time curl -s http://slowapi.resiliency-lab.svc.cluster.local/very-slow; echo; sleep 20; done"]
 EOF
 ```
 
@@ -564,49 +519,66 @@ Monitor the client logs:
 kubectl logs -f -l app=timeout-client -n resiliency-lab
 ```
 
-### Timeout Policy Architecture
+**Expected Results**:
+- Health endpoint: Immediate response
+- Fast endpoint: Immediate response  
+- Slow endpoint: 3-8 second delay
+- Very slow endpoint: 10-15 second delay
+
+### Learning Progression: Multiple Endpoint Timeout Testing
+
+**Educational Flow**: Simple Endpoints → Complex Timeout Policies → Production-Ready
 
 ```
-Without Timeouts:
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│   Client    │    │    Proxy    │    │   Slow      │
-│             │    │             │    │   Service   │
-└─────────────┘    └─────────────┘    └─────────────┘
-       │                   │                   │
-       │ 1. Request        │                   │
-       │ ─────────────────►│                   │
-       │                   │ 2. Forward        │
-       │                   │ ─────────────────►│
-       │                   │                   │ 10s delay
-       │                   │                   │
-       │                   │ 3. Response       │
-       │                   │◄─────────────────│ (after 10s)
-       │ 4. Response       │                   │
-       │◄─────────────────│                   │
-       │                                       │
-       │ Total time: 10+ seconds               │
-
-With Timeouts (5s):
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│   Client    │    │    Proxy    │    │   Slow      │
-│             │    │ (w/ timeout)│    │   Service   │
-└─────────────┘    └─────────────┘    └─────────────┘
-       │                   │                   │
-       │ 1. Request        │                   │
-       │ ─────────────────►│                   │
-       │                   │ 2. Forward        │
-       │                   │ ─────────────────►│
-       │                   │                   │ 10s delay
-       │                   │                   │ (but timeout
-       │                   │ 3. Timeout        │  at 5s)
-       │                   │    (504 error)    │
-       │ 4. 504 Error     │                   │
-       │◄─────────────────│                   │
-       │                                       │
-       │ Total time: 5 seconds (timeout)       │
+Timeout Testing Journey:
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│ Single Service, Multiple Endpoints → Route-Specific Timeouts   │
+│ ┌─────────────────────────────────┐ ┌─────────────────────────┐ │
+│ │ Multiple Endpoint Testing       │ │ Production Timeout      │ │
+│ │                                 │ │ Configuration          │ │
+│ │ Questions Answered:             │ │                         │ │
+│ │ • How do different endpoints    │ │ Questions Answered:     │ │
+│ │   behave with timeouts?         │ │ • How do route-specific │ │
+│ │ • What's the impact of delays?  │ │   timeouts work?        │ │
+│ │ • When do timeouts trigger?     │ │ • Health check handling │ │
+│ │                                 │ │ • Production setup      │ │
+│ └─────────────────────────────────┘ └─────────────────────────┘ │
+│          │                                     │                │
+│          ▼                                     ▼                │
+│ "I understand timeout                "I can implement            │
+│  behavior with real delays"          timeouts in production"    │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### Step 4: Apply Timeout Policy
+**Why This Simplified Approach?**
+
+1. **Single Service Focus**: Concentrate on timeout behavior without infrastructure complexity
+2. **Clear Delay Patterns**: Variable delays show real-world timeout scenarios
+3. **Progressive Complexity**: Start with endpoint testing, move to policy configuration
+4. **Production Readiness**: All configurations work in real environments
+
+**Service Features Table**:
+```
+┌─────────────────┬─────────────────────────────────────────────┐
+│ Aspect          │ Variable Delay Service                      │
+├─────────────────┼─────────────────────────────────────────────┤
+│ Delay Type      │ Variable (0s, 3-8s, 10-15s)               │
+│ Endpoints       │ Multiple (/health, /fast, /slow, /very-slow) │
+│ Use Case        │ Comprehensive Timeout Testing               │
+│ Configuration   │ Route-specific timeout policies             │
+│ Health Checks   │ Kubernetes probes included                  │
+│ Error Handling  │ Production-grade Flask application          │
+│ Learning Focus  │ Real-world timeout scenarios               │
+└─────────────────┴─────────────────────────────────────────────┘
+```
+
+### Step 2: Apply Single Timeout Policy
+
+**Learning objective**: See how a single timeout affects multiple endpoints differently.
+
+Apply a basic timeout policy to the service:
 
 ```bash
 kubectl apply -f - <<EOF
@@ -628,9 +600,9 @@ spec:
 EOF
 ```
 
-### Step 5: Test With Timeouts
+### Step 3: Test Single Timeout Policy
 
-Update the client to test different scenarios:
+Update the client to test different scenarios with the 5s timeout:
 
 ```bash
 kubectl apply -f - <<EOF
@@ -665,11 +637,13 @@ kubectl logs -f -l app=timeout-client -n resiliency-lab
 ```
 
 **Expected Results**:
-- Fast endpoint: Works normally
-- Slow endpoint: Times out after 5 seconds
-- Very slow endpoint: Times out after 5 seconds
+- Fast endpoint: Works normally (0s < 5s timeout)
+- Slow endpoint: Times out after 5 seconds (3-8s > 5s timeout)  
+- Very slow endpoint: Times out after 5 seconds (10-15s > 5s timeout)
 
-### Step 6: Advanced Timeout Configuration
+### Step 4: Apply Route-Specific Timeout Configuration
+
+**Learning objective**: Learn how to configure different timeouts for different routes (production approach).
 
 Apply different timeouts for different routes:
 
@@ -684,6 +658,15 @@ spec:
   hosts:
   - slowapi.resiliency-lab.svc.cluster.local
   http:
+  - match:
+    - uri:
+        prefix: "/health"
+    route:
+    - destination:
+        host: slowapi
+        port:
+          number: 80
+    timeout: 1s
   - match:
     - uri:
         prefix: "/fast"
@@ -712,6 +695,85 @@ spec:
           number: 80
     timeout: 20s
 EOF
+```
+
+**Observe the results with route-specific timeouts**:
+```bash
+kubectl logs -f -l app=timeout-client -n resiliency-lab
+```
+
+**Expected Results**:
+- Health endpoint: Works normally (0s < 1s timeout)
+- Fast endpoint: Works normally (0s < 2s timeout)
+- Slow endpoint: Works normally (3-8s < 10s timeout)
+- Very slow endpoint: Works normally (10-15s < 20s timeout)
+
+### Step 5: Compare Timeout Approaches
+
+**Learning objective**: Understand when to use simple vs. route-specific timeouts.
+
+Let's create a comparison client that tests different timeout strategies:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: comparison-client
+  namespace: resiliency-lab
+  labels:
+    app: comparison-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: comparison-client
+  template:
+    metadata:
+      labels:
+        app: comparison-client
+    spec:
+      containers:
+      - name: comparison-client
+        image: curlimages/curl:latest
+        command: ["/bin/sh"]
+        args: ["-c", "while true; do echo '=== COMPARISON: Simple vs Route-Specific Timeout Strategies ==='; echo; echo '1. Without route-specific timeouts (5s timeout on everything):'; echo '   Fast endpoint:'; time curl -s http://slowapi.resiliency-lab.svc.cluster.local/fast || echo 'TIMEOUT'; echo '   Slow endpoint:'; time curl -s http://slowapi.resiliency-lab.svc.cluster.local/slow || echo 'TIMEOUT'; echo; echo '2. With route-specific timeouts:'; echo '   (Apply route-specific config to see different behavior)'; echo; sleep 25; done"]
+EOF
+```
+
+Monitor the comparison:
+```bash
+kubectl logs -f -l app=comparison-client -n resiliency-lab
+```
+
+### Timeout Strategy Comparison
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Timeout Strategy Comparison                  │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│ Simple Timeout (One Size Fits All)                             │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ All endpoints: 5s timeout                                   │ │
+│ │ ✓ Easy to configure                                         │ │
+│ │ ✓ Consistent behavior                                       │ │
+│ │ ✗ May be too short for some endpoints                      │ │
+│ │ ✗ May be too long for others                               │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│ Route-Specific Timeouts (Tailored Approach)                    │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ /health:    1s  (health checks should be fast)             │ │
+│ │ /fast:      2s  (fast ops should stay fast)                │ │
+│ │ /slow:     10s  (allows for processing time)               │ │
+│ │ /very-slow: 20s (complex operations need time)             │ │
+│ │ ✓ Optimized for each endpoint                               │ │
+│ │ ✓ Better user experience                                    │ │
+│ │ ✓ Production-ready approach                                 │ │
+│ │ ✗ More complex configuration                                │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
