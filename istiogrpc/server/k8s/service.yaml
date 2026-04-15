@@ -1,0 +1,19 @@
+# Headless service — clusterIP: None causes DNS to return individual pod IPs
+# directly instead of a stable virtual IP. This is the root cause of the
+# stale-IP problem when pods are replaced and Istio/Envoy holds old connections.
+apiVersion: v1
+kind: Service
+metadata:
+  name: grpc-server
+  namespace: grpc-demo
+  labels:
+    app: grpc-server
+spec:
+  clusterIP: None      # <-- HEADLESS
+  selector:
+    app: grpc-server
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+      protocol: TCP

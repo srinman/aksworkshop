@@ -1,0 +1,30 @@
+# DestinationRule to fix the stale-connection problem with a headless gRPC service.
+#
+# Without this, Istio uses PASSTHROUGH for headless services, which means
+# Envoy relies on the gRPC client's DNS resolution and connection management.
+# When pods restart the client can hold dead HTTP/2 connections to old pod IPs.
+#
+# Setting trafficPolicy.connectionPool.http2.h2UpgradePolicy and
+# loadBalancer.simple = ROUND_ROBIN on a headless service tells Envoy to
+# manage endpoint discovery (EDS) via xDS and round-robin across live endpoints
+# rather than routing blindly to whatever IP the client resolved.
+#
+# Apply AFTER reproducing the failure to confirm the fix.
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: grpc-server
+  namespace: grpc-demo
+spec:
+  host: grpc-server.grpc-demo.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+    connectionPool:
+      http2:
+        h2UpgradePolicy: UPGRADE
+      tcp:
+        connectTimeout: 5s
+        tcpKeepalive:
+          time: 7200s
+          interval: 75s
